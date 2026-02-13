@@ -46,6 +46,7 @@ h1 {
 
 input,
 textarea,
+select,
 button {
   width: 100%;
   border-radius: 10px;

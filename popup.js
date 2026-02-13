@@ -1,7 +1,8 @@
 console.log('Popup loaded');
 
 const apiKeyEl = document.getElementById('apiKey');
-const modelEl = document.getElementById('model');
+const modelSelectEl = document.getElementById('modelSelect');
+const contentTypeSelectEl = document.getElementById('contentTypeSelect');
 const transcriptEl = document.getElementById('transcript');
 const summaryEl = document.getElementById('summary');
 const statusEl = document.getElementById('status');
@@ -14,7 +15,27 @@ const hasExtensionApis = Boolean(
   globalThis.chrome?.storage?.local && globalThis.chrome?.tabs && globalThis.chrome?.scripting
 );
 
-if (!apiKeyEl || !modelEl || !transcriptEl || !summaryEl || !statusEl || !extractBtn || !copyBtn || !summarizeBtn) {
+const CONTENT_PROMPTS = {
+  politics:
+    'Проанализируй риторику, выяви скрытые смыслы, политические тезисы и возможные манипуляции. Оцени аргументацию.',
+  science:
+    'Упрости сложные концепции, выдели ключевые научные факты, теории и доказательства. Сохраняй точность терминов.',
+  tutorial:
+    'Сделай пошаговый алгоритм действий. Выдели список инструментов/методов и финальный результат.',
+  general: 'Сделай глубокий анализ, выдели 5 главных инсайтов и итоговый вывод.'
+};
+
+if (
+  !apiKeyEl ||
+  !modelSelectEl ||
+  !contentTypeSelectEl ||
+  !transcriptEl ||
+  !summaryEl ||
+  !statusEl ||
+  !extractBtn ||
+  !copyBtn ||
+  !summarizeBtn
+) {
   console.error('UI elements not found. Check HTML ids.');
 } else {
   init().catch((error) => {
@@ -26,8 +47,12 @@ if (!apiKeyEl || !modelEl || !transcriptEl || !summaryEl || !statusEl || !extrac
     await saveToStorage({ openai_api_key: apiKeyEl.value.trim() });
   });
 
-  modelEl.addEventListener('change', async () => {
-    await saveToStorage({ openai_model: modelEl.value.trim() || 'gpt-4o-mini' });
+  modelSelectEl.addEventListener('change', async () => {
+    await saveToStorage({ openai_model: modelSelectEl.value || 'gpt-4o-mini' });
+  });
+
+  contentTypeSelectEl.addEventListener('change', async () => {
+    await saveToStorage({ openai_content_type: contentTypeSelectEl.value || 'general' });
   });
 
   extractBtn.addEventListener('click', async () => {
@@ -71,15 +96,17 @@ if (!apiKeyEl || !modelEl || !transcriptEl || !summaryEl || !statusEl || !extrac
       return;
     }
 
-    const model = modelEl.value.trim() || 'gpt-4o-mini';
+    const model = modelSelectEl.value || 'gpt-4o-mini';
+    const contentType = contentTypeSelectEl.value || 'general';
     setStatus('Генерирую саммари...', false);
 
     try {
-      const summary = await summarizeWithOpenAI({ transcript, apiKey, model });
+      const summary = await summarizeWithOpenAI({ transcript, apiKey, model, contentType });
       summaryEl.value = summary;
       await saveToStorage({
         openai_api_key: apiKey,
         openai_model: model,
+        openai_content_type: contentType,
         last_summary: summary
       });
       setStatus('Саммари готово ✨');
@@ -96,9 +123,17 @@ async function init() {
     return;
   }
 
-  const saved = await chrome.storage.local.get(['openai_api_key', 'openai_model', 'last_transcript', 'last_summary']);
+  const saved = await chrome.storage.local.get([
+    'openai_api_key',
+    'openai_model',
+    'openai_content_type',
+    'last_transcript',
+    'last_summary'
+  ]);
+
   if (saved.openai_api_key) apiKeyEl.value = saved.openai_api_key;
-  if (saved.openai_model) modelEl.value = saved.openai_model;
+  modelSelectEl.value = saved.openai_model || 'gpt-4o-mini';
+  contentTypeSelectEl.value = saved.openai_content_type || 'general';
   if (saved.last_transcript) transcriptEl.value = saved.last_transcript;
   if (saved.last_summary) summaryEl.value = saved.last_summary;
 }
@@ -179,13 +214,6 @@ async function extractTranscriptFromActiveTab() {
           const playerResponse = window.ytInitialPlayerResponse;
           const fromInitial = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
           if (Array.isArray(fromInitial) && fromInitial.length) return fromInitial;
-
-          const ytData = window.ytInitialData;
-          const playerCaptionsRenderer = ytData?.playerOverlays?.playerOverlayRenderer;
-          const fromData = playerCaptionsRenderer?.decoratedPlayerBarRenderer?.decoratedPlayerBarRenderer
-            ?.playerBar?.multiMarkersPlayerBarRenderer?.markersMap;
-
-          if (Array.isArray(fromData) && fromData.length) return fromData;
           return [];
         };
 
@@ -299,9 +327,15 @@ async function extractTranscriptFromActiveTab() {
   }
 }
 
-async function summarizeWithOpenAI({ transcript, apiKey, model }) {
-  const systemPrompt = `Ты аналитик контента. Верни ответ на русском языке строго в markdown-структуре:
+function getSystemPrompt(contentType) {
+  const typePrompt = CONTENT_PROMPTS[contentType] || CONTENT_PROMPTS.general;
 
+  return `Ты аналитик контента. Отвечай только на русском языке и строго в структурированном markdown с эмодзи.
+
+Контекст типа контента:
+${typePrompt}
+
+Формат ответа:
 ## 🧠 Ключевая идея
 - 2-4 буллета
 
@@ -309,12 +343,16 @@ async function summarizeWithOpenAI({ transcript, apiKey, model }) {
 - 4-8 буллетов с эмодзи в начале каждого пункта
 
 ## 🛠️ Практические шаги
-- 3-6 шагов, что сделать после просмотра
+- 3-6 шагов
 
 ## ❓ Вопросы на подумать
 - 3-5 вопросов
 
 Пиши четко, без воды, по сути.`;
+}
+
+async function summarizeWithOpenAI({ transcript, apiKey, model, contentType }) {
+  const systemPrompt = getSystemPrompt(contentType);
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
