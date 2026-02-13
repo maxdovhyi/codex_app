@@ -10,6 +10,7 @@ const statusEl = document.getElementById('status');
 const extractBtn = document.getElementById('extractBtn');
 const copyBtn = document.getElementById('copyBtn');
 const summarizeBtn = document.getElementById('summarizeBtn');
+const openTabBtn = document.getElementById('openTabBtn');
 
 const hasExtensionApis = Boolean(
   globalThis.chrome?.storage?.local && globalThis.chrome?.tabs && globalThis.chrome?.scripting
@@ -36,7 +37,8 @@ if (
   !statusEl ||
   !extractBtn ||
   !copyBtn ||
-  !summarizeBtn
+  !summarizeBtn ||
+  !openTabBtn
 ) {
   console.error('UI elements not found. Check HTML ids.');
 } else {
@@ -83,6 +85,29 @@ if (
       console.error('Copy failed', error);
       setStatus('Ошибка копирования транскрипции', true);
     }
+  });
+
+  openTabBtn.addEventListener('click', () => {
+    const summary = summaryEl.value.trim();
+    if (!summary) {
+      setStatus('Сначала сгенерируй саммари, чтобы открыть его в новой вкладке.', true);
+      return;
+    }
+
+    const html = `<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Summary</title>
+      <style>
+        body { margin: 0; padding: 24px; background: #0f172a; color: #e5e7eb; font-family: 'Segoe UI', sans-serif; }
+        main { max-width: 900px; margin: 0 auto; line-height: 1.6; white-space: pre-wrap; }
+      </style></head><body><main>${escapeHtml(summary)}</main></body></html>`;
+
+    const tab = window.open('about:blank', '_blank');
+    if (!tab) {
+      setStatus('Браузер заблокировал новую вкладку. Разреши pop-up для расширения.', true);
+      return;
+    }
+    tab.document.open();
+    tab.document.write(html);
+    tab.document.close();
   });
 
   summarizeBtn.addEventListener('click', async () => {
@@ -159,6 +184,13 @@ function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.classList.toggle('ok', !isError);
   statusEl.classList.toggle('err', isError);
+}
+
+function escapeHtml(text) {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
 
 function estimateTokenCount(text) {
@@ -343,32 +375,23 @@ async function extractTranscriptFromActiveTab() {
   }
 }
 
-function getSystemPrompt(contentType, model) {
-  const typePrompt = CONTENT_PROMPTS[contentType] || CONTENT_PROMPTS.general;
-  const codexInstruction =
-    model === 'gpt-5.3-codex'
-      ? '\n\nИспользуй метод цепочки рассуждений (Chain of Thought) для выявления неочевидных связей.'
-      : '';
+function getSystemPrompt() {
+  return `Ты — ведущий аналитик и топовый эксперт. Твоя задача — сделать МАКСИМАЛЬНО качественное и наглядное саммари.
 
-  return `Ты аналитик контента. Отвечай только на русском языке и строго в структурированном markdown с эмодзи.
+Стиль: Дерзкий, инсайтовый, экспертный.
 
-Контекст типа контента:
-${typePrompt}${codexInstruction}
+Оформление: Используй много жирного шрифта для акцентов, обилие тематических эмодзи.
 
-Формат ответа:
-## 🧠 Ключевая идея
-- 2-4 буллета
+Структура:
+## 🚀 ГЛАВНЫЙ ИНСАЙТ (Суть одной фразой)
 
-## 🔍 Главные инсайты
-- 4-8 буллетов с эмодзи в начале каждого пункта
+## 💎 КЛЮЧЕВЫЕ ТЕЗИСЫ (Самое мясо с примерами из видео, без придумок)
 
-## 🛠️ Практические шаги
-- 3-6 шагов
+## 🛠 ПРАКТИЧЕСКИЙ ЭКСПЛОЙТ (Как это применить на практике прямо сейчас)
 
-## ❓ Вопросы на подумать
-- 3-5 вопросов
+## ⚠️ КРИТИЧЕСКИЙ РАЗБОР (Где автор видео может ошибаться или что он упустил)
 
-Пиши четко, без воды, по сути.`;
+Правило: Пиши только то, что реально было в видео. Никакой воды.`;
 }
 
 async function summarizeWithOpenAI({ transcript, apiKey, model, contentType }) {

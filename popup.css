@@ -19,7 +19,7 @@ body {
   background: var(--bg);
   color: var(--text);
   width: 100%;
-  min-width: 360px;
+  min-width: 480px;
 }
 
 .app {
@@ -62,6 +62,12 @@ textarea {
   min-height: 72px;
 }
 
+#summary {
+  min-height: 70vh;
+  font-family: 'Segoe UI', sans-serif;
+  line-height: 1.45;
+}
+
 button {
   cursor: pointer;
   background: linear-gradient(180deg, #2563eb, #1d4ed8);
@@ -74,7 +80,8 @@ button.secondary {
   border: 1px solid #374151;
 }
 
-.buttons {
+.buttons,
+.summary-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;

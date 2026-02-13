@@ -38,10 +38,13 @@
       <label class="label" for="transcript">Транскрипция</label>
       <textarea id="transcript" rows="8" placeholder="Тут появится транскрипция видео..."></textarea>
 
-      <button id="summarizeBtn">✨ Сделать саммари и инсайты</button>
+      <div class="summary-actions">
+        <button id="summarizeBtn">✨ Сделать саммари и инсайты</button>
+        <button id="openTabBtn" class="secondary">🧾 Open in New Tab</button>
+      </div>
 
       <label class="label" for="summary">Саммари</label>
-      <textarea id="summary" rows="10" placeholder="Тут будет структурированное саммари..."></textarea>
+      <textarea id="summary" rows="16" placeholder="Тут будет структурированное саммари..."></textarea>
 
       <p id="status" class="status"></p>
     </main>
