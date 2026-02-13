@@ -15,6 +15,8 @@ const hasExtensionApis = Boolean(
   globalThis.chrome?.storage?.local && globalThis.chrome?.tabs && globalThis.chrome?.scripting
 );
 
+const LARGE_TRANSCRIPT_TOKEN_LIMIT = 30000;
+
 const CONTENT_PROMPTS = {
   politics:
     'Проанализируй риторику, выяви скрытые смыслы, политические тезисы и возможные манипуляции. Оцени аргументацию.',
@@ -48,7 +50,7 @@ if (
   });
 
   modelSelectEl.addEventListener('change', async () => {
-    await saveToStorage({ openai_model: modelSelectEl.value || 'gpt-4o-mini' });
+    await saveToStorage({ openai_model: modelSelectEl.value || 'gpt-5-mini' });
   });
 
   contentTypeSelectEl.addEventListener('change', async () => {
@@ -96,8 +98,18 @@ if (
       return;
     }
 
-    const model = modelSelectEl.value || 'gpt-4o-mini';
+    const model = modelSelectEl.value || 'gpt-5-mini';
     const contentType = contentTypeSelectEl.value || 'general';
+    const estimatedTokens = estimateTokenCount(transcript);
+
+    if (estimatedTokens > LARGE_TRANSCRIPT_TOKEN_LIMIT && (model === 'gpt-5.2-pro' || model === 'gpt-5.2-instant')) {
+      setStatus(
+        'Слишком большой текст для этой модели, возможна ошибка лимитов. Рекомендую gpt-5-mini',
+        true
+      );
+      return;
+    }
+
     setStatus('Генерирую саммари...', false);
 
     try {
@@ -132,7 +144,7 @@ async function init() {
   ]);
 
   if (saved.openai_api_key) apiKeyEl.value = saved.openai_api_key;
-  modelSelectEl.value = saved.openai_model || 'gpt-4o-mini';
+  modelSelectEl.value = saved.openai_model || 'gpt-5-mini';
   contentTypeSelectEl.value = saved.openai_content_type || 'general';
   if (saved.last_transcript) transcriptEl.value = saved.last_transcript;
   if (saved.last_summary) summaryEl.value = saved.last_summary;
@@ -147,6 +159,10 @@ function setStatus(message, isError = false) {
   statusEl.textContent = message;
   statusEl.classList.toggle('ok', !isError);
   statusEl.classList.toggle('err', isError);
+}
+
+function estimateTokenCount(text) {
+  return Math.ceil((text || '').length / 4);
 }
 
 async function extractTranscriptFromActiveTab() {
@@ -327,13 +343,17 @@ async function extractTranscriptFromActiveTab() {
   }
 }
 
-function getSystemPrompt(contentType) {
+function getSystemPrompt(contentType, model) {
   const typePrompt = CONTENT_PROMPTS[contentType] || CONTENT_PROMPTS.general;
+  const codexInstruction =
+    model === 'gpt-5.3-codex'
+      ? '\n\nИспользуй метод цепочки рассуждений (Chain of Thought) для выявления неочевидных связей.'
+      : '';
 
   return `Ты аналитик контента. Отвечай только на русском языке и строго в структурированном markdown с эмодзи.
 
 Контекст типа контента:
-${typePrompt}
+${typePrompt}${codexInstruction}
 
 Формат ответа:
 ## 🧠 Ключевая идея
@@ -352,7 +372,7 @@ ${typePrompt}
 }
 
 async function summarizeWithOpenAI({ transcript, apiKey, model, contentType }) {
-  const systemPrompt = getSystemPrompt(contentType);
+  const systemPrompt = getSystemPrompt(contentType, model);
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
