@@ -39,7 +39,7 @@ if (!apiKeyEl || !modelEl || !transcriptEl || !summaryEl || !statusEl || !extrac
       setStatus('Транскрипция успешно получена ✅');
     } catch (error) {
       console.error('Transcript extraction failed', error);
-      setStatus('Ошибка: транскрипт не найден', true);
+      setStatus(error?.message || 'Ошибка: транскрипт не найден', true);
     }
   });
 
@@ -119,59 +119,180 @@ async function extractTranscriptFromActiveTab() {
     throw new Error('Открой расширение через chrome://extensions и страницу YouTube-видео.');
   }
 
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error('Активная вкладка не найдена.');
-    if (!tab.url || !tab.url.includes('youtube.com/watch')) {
-      throw new Error('Открой страницу видео YouTube (watch) и попробуй снова.');
-    }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) throw new Error('Активная вкладка не найдена.');
+  if (!tab.url || !tab.url.includes('youtube.com/')) {
+    throw new Error('Открой страницу видео YouTube и попробуй снова.');
+  }
 
-    const [{ result }] = await chrome.scripting.executeScript({
+  try {
+    const [execution] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
       func: async () => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const decode = (html) => {
           const txt = document.createElement('textarea');
           txt.innerHTML = html;
           return txt.value;
         };
 
-        const playerResponse = window.ytInitialPlayerResponse;
-        const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        const getVideoIdFromUrl = () => {
+          const url = new URL(window.location.href);
+          const byQuery = url.searchParams.get('v');
+          if (byQuery) return byQuery;
+          const shortsMatch = url.pathname.match(/^\/shorts\/([^/?]+)/);
+          if (shortsMatch?.[1]) return shortsMatch[1];
+          const embedMatch = url.pathname.match(/^\/embed\/([^/?]+)/);
+          if (embedMatch?.[1]) return embedMatch[1];
+          return null;
+        };
 
-        if (!captionTracks || !captionTracks.length) {
-          throw new Error('У этого видео нет доступной транскрипции.');
+        const clickFirst = (selectors) => {
+          for (const selector of selectors) {
+            const node = document.querySelector(selector);
+            if (node) {
+              node.click();
+              return true;
+            }
+          }
+          return false;
+        };
+
+        const getTranscriptFromPanel = () => {
+          const segmentSelectors = [
+            'ytd-transcript-segment-renderer #segment-text',
+            'ytd-transcript-segment-renderer .segment-text',
+            'yt-formatted-string.segment-text'
+          ];
+
+          const lines = segmentSelectors
+            .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
+            .map((node) => node.textContent?.trim() || '')
+            .filter(Boolean);
+
+          if (!lines.length) return null;
+          return lines.join(' ').replace(/\s+/g, ' ').trim();
+        };
+
+        const getCaptionTracks = () => {
+          const playerResponse = window.ytInitialPlayerResponse;
+          const fromInitial = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          if (Array.isArray(fromInitial) && fromInitial.length) return fromInitial;
+
+          const ytData = window.ytInitialData;
+          const playerCaptionsRenderer = ytData?.playerOverlays?.playerOverlayRenderer;
+          const fromData = playerCaptionsRenderer?.decoratedPlayerBarRenderer?.decoratedPlayerBarRenderer
+            ?.playerBar?.multiMarkersPlayerBarRenderer?.markersMap;
+
+          if (Array.isArray(fromData) && fromData.length) return fromData;
+          return [];
+        };
+
+        const fetchByCaptionTrack = async () => {
+          const tracks = getCaptionTracks();
+          const preferred = tracks.find((t) => t?.languageCode?.startsWith('ru')) || tracks[0];
+          const baseUrl = preferred?.baseUrl;
+          if (!baseUrl) return null;
+
+          const transcriptUrl = baseUrl.includes('fmt=json3') ? baseUrl : `${baseUrl}&fmt=json3`;
+          const response = await fetch(transcriptUrl);
+          if (!response.ok) return null;
+
+          const data = await response.json();
+          const text = (data?.events || [])
+            .flatMap((event) => event?.segs || [])
+            .map((seg) => decode(seg?.utf8 || ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          return text || null;
+        };
+
+        const openTranscriptPanel = async () => {
+          const transcriptButtonSelectors = [
+            'button[aria-label*="Показать текст видео"]',
+            'button[aria-label*="Показать расшифровку"]',
+            'button[aria-label*="Show transcript"]',
+            'ytd-button-renderer button[aria-label*="текст"]',
+            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="текст"]',
+            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="transcript"]'
+          ];
+
+          const moreButtonSelectors = [
+            '#description-inline-expander button[aria-label*="Ещё"]',
+            '#description-inline-expander button[aria-label*="More"]',
+            'tp-yt-paper-button#expand',
+            '#expand'
+          ];
+
+          if (clickFirst(transcriptButtonSelectors)) {
+            await sleep(1200);
+            return true;
+          }
+
+          clickFirst(moreButtonSelectors);
+          await sleep(500);
+
+          const menuButtonSelectors = [
+            'ytd-menu-renderer yt-icon-button button',
+            '#above-the-fold #menu button',
+            'button[aria-label="Ещё действия"]',
+            'button[aria-label="More actions"]'
+          ];
+
+          clickFirst(menuButtonSelectors);
+          await sleep(600);
+
+          const menuTranscriptSelectors = [
+            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="текст"]',
+            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="расшифров"]',
+            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="transcript"]',
+            'ytd-menu-service-item-renderer tp-yt-paper-item'
+          ];
+
+          for (const selector of menuTranscriptSelectors) {
+            const items = Array.from(document.querySelectorAll(selector));
+            const target = items.find((item) => /текст|расшифров|transcript/i.test(item.textContent || ''));
+            if (target) {
+              target.click();
+              await sleep(1200);
+              return true;
+            }
+          }
+
+          return false;
+        };
+
+        const videoId = getVideoIdFromUrl();
+        if (!videoId) {
+          return { ok: false, error: 'Не удалось определить videoId из URL.' };
         }
 
-        const preferred = captionTracks.find((t) => t.languageCode?.startsWith('ru')) || captionTracks[0];
-        const baseUrl = preferred.baseUrl;
-        if (!baseUrl) throw new Error('Не найден URL транскрипции.');
+        let text = await fetchByCaptionTrack();
+        if (text) return { ok: true, text };
 
-        const transcriptUrl = baseUrl.includes('fmt=json3') ? baseUrl : `${baseUrl}&fmt=json3`;
-
-        const response = await fetch(transcriptUrl);
-        if (!response.ok) {
-          throw new Error('Не удалось загрузить транскрипцию с YouTube.');
+        const panelOpened = await openTranscriptPanel();
+        if (panelOpened) {
+          await sleep(700);
+          text = getTranscriptFromPanel();
+          if (text) return { ok: true, text };
         }
 
-        const data = await response.json();
-        const events = data?.events || [];
-
-        const text = events
-          .flatMap((event) => event?.segs || [])
-          .map((seg) => decode(seg.utf8 || ''))
-          .join(' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-        if (!text) throw new Error('Транскрипция пустая.');
-
-        return text;
+        return {
+          ok: false,
+          error: 'Транскрипция не найдена. Пожалуйста, включи субтитры на самом видео.'
+        };
       }
     });
 
-    if (!result) throw new Error('Не удалось извлечь транскрипцию.');
-    return result;
+    const result = execution?.result;
+    if (!result?.ok || !result?.text) {
+      throw new Error(result?.error || 'Не удалось извлечь транскрипцию.');
+    }
+
+    return result.text;
   } catch (error) {
     console.error('extractTranscriptFromActiveTab error', error);
     throw error;
