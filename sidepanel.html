@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>YouTube Insight Summarizer</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>🎯 YouTube Insight Summarizer</h1>
+      <p class="hint">1) Открой видео на YouTube → 2) Вытащи транскрипт → 3) Сделай саммари.</p>
+
+      <label class="label" for="apiKey">OpenAI API Key</label>
+      <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+
+      <label class="label" for="modelSelect">Модель</label>
+      <select id="modelSelect">
+        <option value="gpt-4o-mini" selected>gpt-4o-mini (Быстро и дешево)</option>
+        <option value="gpt-4o">gpt-4o (Максимальный интеллект)</option>
+      </select>
+
+      <label class="label" for="contentTypeSelect">Тип контента</label>
+      <select id="contentTypeSelect">
+        <option value="general" selected>Общее (Другое)</option>
+        <option value="politics">Политика</option>
+        <option value="science">Науч-пок</option>
+        <option value="tutorial">Образование (Туториал)</option>
+      </select>
+
+      <div class="buttons">
+        <button id="extractBtn">📄 Получить транскрипцию</button>
+        <button id="copyBtn" class="secondary">📋 Скопировать транскрипцию</button>
+      </div>
+
+      <label class="label" for="transcript">Транскрипция</label>
+      <textarea id="transcript" rows="8" placeholder="Тут появится транскрипция видео..."></textarea>
+
+      <button id="summarizeBtn">✨ Сделать саммари и инсайты</button>
+
+      <label class="label" for="summary">Саммари</label>
+      <textarea id="summary" rows="10" placeholder="Тут будет структурированное саммари..."></textarea>
+
+      <p id="status" class="status"></p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
