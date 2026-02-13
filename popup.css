@@ -1,0 +1,94 @@
+:root {
+  color-scheme: dark;
+  --bg: #0f172a;
+  --panel: #111827;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --accent: #60a5fa;
+  --accent-2: #22c55e;
+  --danger: #f87171;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  width: 100%;
+  min-width: 360px;
+}
+
+.app {
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+input,
+textarea,
+button {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px;
+  font-size: 13px;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+button {
+  cursor: pointer;
+  background: linear-gradient(180deg, #2563eb, #1d4ed8);
+  border: none;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: #1f2937;
+  border: 1px solid #374151;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.status {
+  margin: 2px 0 0;
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.status.ok {
+  color: var(--accent-2);
+}
+
+.status.err {
+  color: var(--danger);
+}

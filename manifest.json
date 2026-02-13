@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Insight Summarizer",
+  "description": "Извлекает транскрипцию YouTube-видео и делает структурированное саммари через GPT.",
+  "version": "1.1.0",
+  "permissions": ["storage", "activeTab", "scripting", "sidePanel"],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://api.openai.com/*"
+  ],
+  "action": {
+    "default_title": "YouTube Insight Summarizer"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
