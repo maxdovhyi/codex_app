@@ -94,17 +94,56 @@ if (
       return;
     }
 
-    const html = `<!doctype html><html lang="ru"><head><meta charset="UTF-8"><title>Summary</title>
-      <style>
-        body { margin: 0; padding: 24px; background: #0f172a; color: #e5e7eb; font-family: 'Segoe UI', sans-serif; }
-        main { max-width: 900px; margin: 0 auto; line-height: 1.6; white-space: pre-wrap; }
-      </style></head><body><main>${escapeHtml(summary)}</main></body></html>`;
-
     const tab = window.open('about:blank', '_blank');
     if (!tab) {
       setStatus('Браузер заблокировал новую вкладку. Разреши pop-up для расширения.', true);
       return;
     }
+
+    const escaped = escapeHtml(summary);
+    const html = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Summary</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #0f172a;
+      color: #e5e7eb;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 22px;
+    }
+    main {
+      max-width: 900px;
+      margin: 0 auto;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    h2 {
+      color: #93c5fd;
+      margin: 20px 0 8px;
+      font-size: 1.15em;
+    }
+  </style>
+</head>
+<body>
+  <main id="content">${escaped}</main>
+  <script>
+    (() => {
+      const content = document.getElementById('content');
+      if (!content) return;
+
+      let html = content.innerHTML;
+      html = html.replace(/^##\s+(.+)$/gm, '<h2>$1<\/h2>');
+      html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #fbbf24;">$1<\/strong>');
+      content.innerHTML = html;
+    })();
+  <\/script>
+</body>
+</html>`;
+
     tab.document.open();
     tab.document.write(html);
     tab.document.close();
@@ -187,10 +226,7 @@ function setStatus(message, isError = false) {
 }
 
 function escapeHtml(text) {
-  return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function estimateTokenCount(text) {
@@ -204,175 +240,102 @@ async function extractTranscriptFromActiveTab() {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('Активная вкладка не найдена.');
-  if (!tab.url || !tab.url.includes('youtube.com/')) {
-    throw new Error('Открой страницу видео YouTube и попробуй снова.');
+  if (!tab.url || !tab.url.includes('youtube.com/watch')) {
+    throw new Error('Открой страницу видео YouTube (watch) и попробуй снова.');
   }
 
-  try {
-    const [execution] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: 'MAIN',
-      func: async () => {
-        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-        const decode = (html) => {
-          const txt = document.createElement('textarea');
-          txt.innerHTML = html;
-          return txt.value;
-        };
+  const [execution] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: 'MAIN',
+    func: async () => {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const decode = (html) => {
+        const txt = document.createElement('textarea');
+        txt.innerHTML = html;
+        return txt.value;
+      };
 
-        const getVideoIdFromUrl = () => {
-          const url = new URL(window.location.href);
-          const byQuery = url.searchParams.get('v');
-          if (byQuery) return byQuery;
-          const shortsMatch = url.pathname.match(/^\/shorts\/([^/?]+)/);
-          if (shortsMatch?.[1]) return shortsMatch[1];
-          const embedMatch = url.pathname.match(/^\/embed\/([^/?]+)/);
-          if (embedMatch?.[1]) return embedMatch[1];
-          return null;
-        };
+      const transcriptFromTracklist = async () => {
+        const playerResponse = window.ytInitialPlayerResponse;
+        const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+        if (!tracks.length) return null;
 
-        const clickFirst = (selectors) => {
-          for (const selector of selectors) {
-            const node = document.querySelector(selector);
-            if (node) {
-              node.click();
-              return true;
-            }
-          }
-          return false;
-        };
+        const preferred =
+          tracks.find((track) => track?.languageCode?.startsWith('en')) ||
+          tracks.find((track) => track?.languageCode?.startsWith('ru')) ||
+          tracks[0];
 
-        const getTranscriptFromPanel = () => {
-          const segmentSelectors = [
-            'ytd-transcript-segment-renderer #segment-text',
-            'ytd-transcript-segment-renderer .segment-text',
-            'yt-formatted-string.segment-text'
-          ];
+        const baseUrl = preferred?.baseUrl;
+        if (!baseUrl) return null;
 
-          const lines = segmentSelectors
-            .flatMap((selector) => Array.from(document.querySelectorAll(selector)))
-            .map((node) => node.textContent?.trim() || '')
-            .filter(Boolean);
+        const transcriptUrl = baseUrl.includes('fmt=json3') ? baseUrl : `${baseUrl}&fmt=json3`;
+        const response = await fetch(transcriptUrl);
+        if (!response.ok) return null;
 
-          if (!lines.length) return null;
-          return lines.join(' ').replace(/\s+/g, ' ').trim();
-        };
+        const data = await response.json();
+        const text = (data?.events || [])
+          .flatMap((event) => event?.segs || [])
+          .map((seg) => decode(seg?.utf8 || ''))
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
 
-        const getCaptionTracks = () => {
-          const playerResponse = window.ytInitialPlayerResponse;
-          const fromInitial = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-          if (Array.isArray(fromInitial) && fromInitial.length) return fromInitial;
-          return [];
-        };
+        return text || null;
+      };
 
-        const fetchByCaptionTrack = async () => {
-          const tracks = getCaptionTracks();
-          const preferred = tracks.find((t) => t?.languageCode?.startsWith('ru')) || tracks[0];
-          const baseUrl = preferred?.baseUrl;
-          if (!baseUrl) return null;
-
-          const transcriptUrl = baseUrl.includes('fmt=json3') ? baseUrl : `${baseUrl}&fmt=json3`;
-          const response = await fetch(transcriptUrl);
-          if (!response.ok) return null;
-
-          const data = await response.json();
-          const text = (data?.events || [])
-            .flatMap((event) => event?.segs || [])
-            .map((seg) => decode(seg?.utf8 || ''))
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-
-          return text || null;
-        };
-
-        const openTranscriptPanel = async () => {
-          const transcriptButtonSelectors = [
-            'button[aria-label*="Показать текст видео"]',
-            'button[aria-label*="Показать расшифровку"]',
-            'button[aria-label*="Show transcript"]',
-            'ytd-button-renderer button[aria-label*="текст"]',
-            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="текст"]',
-            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="transcript"]'
-          ];
-
-          const moreButtonSelectors = [
-            '#description-inline-expander button[aria-label*="Ещё"]',
-            '#description-inline-expander button[aria-label*="More"]',
-            'tp-yt-paper-button#expand',
-            '#expand'
-          ];
-
-          if (clickFirst(transcriptButtonSelectors)) {
-            await sleep(1200);
+      const transcriptFromUiFallback = async () => {
+        const clickByText = (selector, regex) => {
+          const nodes = Array.from(document.querySelectorAll(selector));
+          const target = nodes.find((node) => regex.test(node.textContent || '') || regex.test(node.getAttribute('aria-label') || ''));
+          if (target) {
+            target.click();
             return true;
           }
-
-          clickFirst(moreButtonSelectors);
-          await sleep(500);
-
-          const menuButtonSelectors = [
-            'ytd-menu-renderer yt-icon-button button',
-            '#above-the-fold #menu button',
-            'button[aria-label="Ещё действия"]',
-            'button[aria-label="More actions"]'
-          ];
-
-          clickFirst(menuButtonSelectors);
-          await sleep(600);
-
-          const menuTranscriptSelectors = [
-            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="текст"]',
-            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="расшифров"]',
-            'ytd-menu-service-item-renderer tp-yt-paper-item[aria-label*="transcript"]',
-            'ytd-menu-service-item-renderer tp-yt-paper-item'
-          ];
-
-          for (const selector of menuTranscriptSelectors) {
-            const items = Array.from(document.querySelectorAll(selector));
-            const target = items.find((item) => /текст|расшифров|transcript/i.test(item.textContent || ''));
-            if (target) {
-              target.click();
-              await sleep(1200);
-              return true;
-            }
-          }
-
           return false;
         };
 
-        const videoId = getVideoIdFromUrl();
-        if (!videoId) {
-          return { ok: false, error: 'Не удалось определить videoId из URL.' };
+        const clickedMore =
+          clickByText('button, tp-yt-paper-item, a', /(^|\s)more($|\s)|ещё/i) ||
+          clickByText('#expand, tp-yt-paper-button#expand', /.*/);
+
+        if (clickedMore) {
+          await sleep(400);
         }
 
-        let text = await fetchByCaptionTrack();
-        if (text) return { ok: true, text };
+        const clickedTranscript = clickByText('button, tp-yt-paper-item, ytd-menu-service-item-renderer', /show transcript|транскрип|расшифров|текст/i);
+        if (!clickedTranscript) return null;
 
-        const panelOpened = await openTranscriptPanel();
-        if (panelOpened) {
-          await sleep(700);
-          text = getTranscriptFromPanel();
-          if (text) return { ok: true, text };
-        }
+        await sleep(1200);
 
-        return {
-          ok: false,
-          error: 'Транскрипция не найдена. Пожалуйста, включи субтитры на самом видео.'
-        };
-      }
-    });
+        const segments = Array.from(document.querySelectorAll('.segment-text'))
+          .map((node) => node.textContent?.trim() || '')
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
 
-    const result = execution?.result;
-    if (!result?.ok || !result?.text) {
-      throw new Error(result?.error || 'Не удалось извлечь транскрипцию.');
+        return segments || null;
+      };
+
+      const direct = await transcriptFromTracklist();
+      if (direct) return { ok: true, text: direct };
+
+      const fallback = await transcriptFromUiFallback();
+      if (fallback) return { ok: true, text: fallback };
+
+      return {
+        ok: false,
+        error: 'Транскрипция не найдена. Пожалуйста, включи субтитры на самом видео.'
+      };
     }
+  });
 
-    return result.text;
-  } catch (error) {
-    console.error('extractTranscriptFromActiveTab error', error);
-    throw error;
+  const result = execution?.result;
+  if (!result?.ok || !result?.text) {
+    throw new Error(result?.error || 'Не удалось извлечь транскрипцию.');
   }
+
+  return result.text;
 }
 
 function getSystemPrompt() {
@@ -394,8 +357,8 @@ function getSystemPrompt() {
 Правило: Пиши только то, что реально было в видео. Никакой воды.`;
 }
 
-async function summarizeWithOpenAI({ transcript, apiKey, model, contentType }) {
-  const systemPrompt = getSystemPrompt(contentType, model);
+async function summarizeWithOpenAI({ transcript, apiKey, model }) {
+  const systemPrompt = getSystemPrompt();
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -405,7 +368,7 @@ async function summarizeWithOpenAI({ transcript, apiKey, model, contentType }) {
     },
     body: JSON.stringify({
       model,
-      temperature: 0.3,
+      temperature: 1,
       messages: [
         { role: 'system', content: systemPrompt },
         {
